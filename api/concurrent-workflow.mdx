@@ -384,11 +384,16 @@ result = workflow.run("Analyze market trends")
 
 ## Error Handling
 
+Set `on_error="raise"` to route agent failures to your `except` block. The
+`"store"` default records failed agents as error outputs and returns normally.
+Exception propagation does not cancel other submitted agent calls.
+
 ```python
 try:
     workflow = ConcurrentWorkflow(
         agents=[technical_analyst, business_analyst],
-        show_dashboard=True
+        show_dashboard=True,
+        on_error="raise",
     )
     result = workflow.run("Analyze this topic")
 except ValueError as e:

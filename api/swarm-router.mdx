@@ -66,6 +66,7 @@ SwarmRouter(
     swarm_type: SwarmType = "SequentialWorkflow",
     autosave: bool = False,
     rearrange_flow: Optional[str] = None,
+    fallback_swarms: Optional[List[SwarmType]] = None,
     output_type: OutputType = "dict",
     multi_agent_collab_prompt: bool = False,
     list_all_agents: bool = False,
@@ -120,6 +121,10 @@ SwarmRouter(
 </ParamField>
 
 ### Behavior modifiers
+
+<ParamField path="fallback_swarms" type="Optional[List[SwarmType]]" default="None">
+  Ordered fallback architectures to try if constructing or running the primary swarm raises an exception. Use a list of valid `SwarmType` values. `None` or `[]` disables fallback. If the list includes `"AgentRearrange"`, also set `rearrange_flow`.
+</ParamField>
 
 <ParamField path="multi_agent_collab_prompt" type="bool" default="False">
   Deliver the built-in collaboration prompt to each agent so they understand they are part of a multi-agent team. It is passed to the swarm at construction and reaches the agents as a **system turn** at run time; the caller's `Agent` objects are never modified.
@@ -235,12 +240,41 @@ router = SwarmRouter(
 ## Exceptions
 
 <ResponseField name="SwarmRouterConfigError" type="Exception">
-  Raised by `reliability_check()` when construction inputs are invalid: unknown `swarm_type`, missing required parameter for the chosen type (e.g. `rearrange_flow` for `AgentRearrange`), `max_loops <= 0`, etc.
+  Raised by `reliability_check()` when construction inputs are invalid: unknown `swarm_type`, invalid `fallback_swarms`, missing `rearrange_flow` for a primary or fallback `AgentRearrange`, or `max_loops == 0`.
 </ResponseField>
 
 <ResponseField name="SwarmRouterRunError" type="Exception">
-  Raised by `run()` / `batch_run()` / `concurrent_run()` when task execution fails inside the underlying swarm. Wraps the original traceback.
+  Raised when the primary swarm and every configured fallback fail. The message summarizes the failed attempts, and the final exception is retained as `__cause__`. Without fallbacks, the exception reaching the routing loop propagates unchanged. `batch_run()` wraps task failures in `RuntimeError`.
 </ResponseField>
+
+## Configure fallback architectures
+
+Set `fallback_swarms` to recover from an exception during swarm construction or execution. Each call starts with `swarm_type`, then tries the fallback list in order. The first normal return ends the chain, even if the result is `None` or empty; the router does not evaluate result quality.
+
+This example reuses the `researcher` and `analyst` agents from the usage example below:
+
+```python
+from swarms.structs.swarm_router import SwarmRouter, SwarmRouterRunError
+
+router = SwarmRouter(
+    agents=[researcher, analyst],
+    swarm_type="SequentialWorkflow",
+    fallback_swarms=["ConcurrentWorkflow"],
+)
+
+try:
+    result = router.run("Summarize the findings.")
+    print(router.active_swarm_type)
+except SwarmRouterRunError as exc:
+    print(f"All configured architectures failed: {exc}")
+
+for attempt in router.fallback_attempts:
+    print(attempt["swarm_type"], str(attempt["error"]))
+```
+
+`router.fallback_attempts` contains failed attempts only, with an exception object in each `error` field. It resets at the start of each run and stays empty when fallback is disabled. After a successful attempt, `active_swarm_type` identifies the successful architecture; `swarm_type` still identifies the configured primary.
+
+Choose architectures that accept your agents and runtime inputs. Each attempt receives the same task arguments; the router does not roll back agent state or earlier side effects. Errors while binding the conversation or saving the workspace after a successful attempt do not trigger fallback.
 
 ## Methods
 
@@ -262,7 +296,7 @@ Execute a single task using the configured swarm.
 
 **Returns:** `Any` — shape depends on `output_type` and the underlying swarm.
 
-**Raises:** `SwarmRouterRunError` on execution failure.
+**Raises:** `SwarmRouterRunError` if the primary and all configured fallbacks fail. Without fallbacks, the routing loop re-raises the exception it receives.
 
 ```python
 result = router.run("Analyse Q1 market trends.")

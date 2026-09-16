@@ -293,7 +293,7 @@ Execute many tasks sequentially. Each task gets a fresh execution against the sa
 </ParamField>
 
 <ParamField path="imgs" type="List[str]" optional>
-  Per-task images aligned to `tasks` by index.
+  The same list is forwarded as `imgs=` to every task's `run()` call. Images are not paired with tasks by index. The underlying swarm must support this argument.
 </ParamField>
 
 **Returns:** `List[Any]` — results in the same order as `tasks`.
@@ -306,14 +306,45 @@ results = router.batch_run([
 ])
 ```
 
----
-
-### `concurrent_run(task, img=None, imgs=None, *args, **kwargs)`
-
-Execute one task in a separate thread using a `ThreadPoolExecutor`. Useful when calling the router from synchronous code that should not block.
+To use one image per task, check that the lists have the same length and pass each image as `img` in a separate `run()` call:
 
 ```python
-result = router.concurrent_run("Summarize Q1.")
+tasks = ["Describe the first image.", "Describe the second image."]
+images = ["first.png", "second.png"]
+if len(tasks) != len(images):
+    raise ValueError("Provide one image per task.")
+results = [
+    router.run(task, img=image)
+    for task, image in zip(tasks, images)
+]
+```
+
+---
+
+### `concurrent_run(tasks, imgs=None, *args, **kwargs)`
+
+Execute a list of tasks in parallel by calling `run()` once per task on the same router instance. This is a synchronous method: it waits for the executions to finish before returning. It does not return a future or an awaitable.
+
+<ParamField path="tasks" type="List[str]" required>
+  Tasks to process. Pass a list even when you have only one task.
+</ParamField>
+
+<ParamField path="imgs" type="List[str]" optional>
+  One image per task, matched by position. For a nonempty task list, the image list must have the same length; otherwise, `ValueError` is raised before any task runs. Omit this parameter for text-only tasks.
+</ParamField>
+
+**Returns by default:** `List[Any]` — one result per task, in input order, even when tasks finish in a different order. An empty task list returns `[]`.
+
+**Raises by default:** Exceptions from task execution propagate to the caller.
+
+```python
+results = router.concurrent_run([
+    "Summarize Q1.",
+    "Summarize Q2.",
+])
+# results[0] is the Q1 result; results[1] is the Q2 result.
+
+single_result = router.concurrent_run(["Summarize Q3."])[0]
 ```
 
 ---
